@@ -96,7 +96,7 @@ Part of NMS is implemented in C++. The code can be compiled by
 
 ```shell
 cd ./libs/utils
-python setup.py install --user
+python setup.py install --user # if using venv, don't use the --user flag
 cd ../..
 ```
 

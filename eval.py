@@ -113,6 +113,20 @@ def main(args):
     print("All done! Total time: {:0.2f} sec".format(end - start))
     return
 
+def run(config, ckpt, epoch=-1, topk=-1, saveonly=False, print_freq=10):
+    """Programmatically call the main functionality."""
+    class Args:
+        def __init__(self, config, ckpt, epoch, topk, saveonly, print_freq):
+            self.config = config
+            self.ckpt = ckpt
+            self.epoch = epoch
+            self.topk = topk
+            self.saveonly = saveonly
+            self.print_freq = print_freq
+
+    args = Args(config, ckpt, epoch, topk, saveonly, print_freq)
+    main(args)
+
 ################################################################################
 if __name__ == '__main__':
     """Entry Point"""
