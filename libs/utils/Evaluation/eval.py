@@ -92,7 +92,7 @@ def evaluation_detection(gt_filename,pred_filename,tious,subset):
     mAP_at_tIoU = [f'mAP@{t:.2f} {mAP*100:.3f}' for t, mAP in zip(anet_detection.tiou_thresholds, anet_detection.mAP)]
     results = f'Detection: average-mAP {anet_detection.average_mAP*100:.3f} {" ".join(mAP_at_tIoU)}'
     print(results)
-    with open(pred_filename.replace('.json','.txt'), 'a') as fobj:
+    with open(pred_filename.replace('.json','.txt'), 'w') as fobj:
         fobj.write(f'{results}\n')
     return np.mean(anet_detection.mAP)*100
 
