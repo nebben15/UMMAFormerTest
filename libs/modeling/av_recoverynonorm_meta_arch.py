@@ -333,9 +333,14 @@ class AVPtTransformerRecovery(nn.Module):
         batched_inputs, batched_masks = self.preprocessing(video_list)
 
         # forward the network (backbone -> neck -> heads)
+
+        # TFAA (= DCAE + CRA) (Temporal Feature Abnormal Attention)
+        # DCAE (Deep Convolutional Auto Encoder)
         norm_inputs,reco_result, cls_scores = self.interpolator(batched_inputs, batched_masks)
-        
+        # CRA (Cross Reconstruction Attention)
         feats, masks = self.backbone(batched_inputs,norm_inputs, reco_result,batched_masks)
+        
+        # PCA-FPN (Parallel Cross-Attention Feature Pyramid Network)
         fpn_feats, fpn_masks = self.neck(feats, masks)
 
         # compute the point coordinate along the FPN
