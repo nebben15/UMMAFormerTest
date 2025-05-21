@@ -65,6 +65,7 @@ class FPN1D(nn.Module):
         assert len(fpn_masks) ==  len(self.in_channels)
 
         # build laterals, fpn_masks will remain the same with 1x1 convs
+        # operates on C (so feature dim)
         laterals = []
         for i in range(len(self.lateral_convs)):
             x, _ = self.lateral_convs[i](
@@ -81,6 +82,7 @@ class FPN1D(nn.Module):
 
         # fpn conv / norm -> outputs
         # mask will remain the same
+        # 3 sized kernel, operates on T
         fpn_feats = tuple()
         new_fpn_masks = tuple()
         for i in range(used_backbone_levels):

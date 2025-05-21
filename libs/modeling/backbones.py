@@ -417,6 +417,7 @@ class ConvHRLRFullResSelfAttTransformerBackboneRevised(nn.Module):
         
         
         # feature projection
+        # project each part of the feature corresponding to a modality individually and then concat
         if isinstance(self.n_in, (list, tuple)):
             x = torch.cat(
                 [proj(s, mask)[0] \
@@ -433,7 +434,7 @@ class ConvHRLRFullResSelfAttTransformerBackboneRevised(nn.Module):
                     for proj, s in zip(self.proj, reco_x.split(self.n_in, dim=1))
                 ], dim=1
             )
-        # embedding network
+        # embedding network (feature extraction ?)
         for idx in range(len(self.embd)):
             x, mask = self.embd[idx](x, mask)
             x = self.relu(self.embd_norm[idx](x))
@@ -464,6 +465,7 @@ class ConvHRLRFullResSelfAttTransformerBackboneRevised(nn.Module):
             norm_x = norm_x + pe[:, :, :T] * mask.to(x.dtype)
             reco_x = reco_x + pe[:, :, :T] * mask.to(x.dtype)
 
+        # "residual self attention", cross attention, use reco for keys
         x = self.resselfattention(x,mask, x_k=reco_x, mask_k=mask, x_v=x, mask_v=mask)[0]
         
         # stem transformer
@@ -480,12 +482,19 @@ class ConvHRLRFullResSelfAttTransformerBackboneRevised(nn.Module):
         lh_mask=mask
         out_feats = [lh_feat]
         out_masks = [lh_mask]        
-        # main branch with downsampling
+        # main branch with downsampling (temporal dimension)
+        # first part of the PCA-FPN (parallel cross-attentin pyramid network)
+        # allows for interactions at different resolutions (progressively coarser)
+        # branch downsamples based on n_ds_strides
+        # use interpolation to align features with different resolutions
         x,mask = lh_feat,lh_mask
         for idx in range(len(self.branch)):
-            x, mask = self.branch[idx](x, mask)
+            # downsample T using self attention with stride
+            x, mask = self.branch[idx](x, mask) 
+            # parallel high-res feature (use x and interpolate to get correct size)
             lh_feat, lh_mask = self.lh_branch[idx](lh_feat, lh_mask, x_k=F.interpolate(x, scale_factor=self.scale_factor**(idx+1), mode='nearest'), mask_k=lh_mask, x_v=F.interpolate(x, scale_factor=self.scale_factor**(idx+1), mode='nearest'), mask_v=lh_mask)
-            out_feats.append(x)
+            # store at different resolutions for downstream fpn
+            out_feats.append(x) 
             out_masks.append(mask)
             x, mask = self.hh_branch[idx](x, mask, x_k=F.interpolate(lh_feat, scale_factor=1/(self.scale_factor**(idx+1)), mode='nearest'), mask_k=mask, x_v=F.interpolate(lh_feat, scale_factor=1/(self.scale_factor**(idx+1)), mode='nearest'), mask_v=mask)
             # x = x + F.interpolate(lh_feat, scale_factor=1/(self.scale_factor**(idx+1)))
