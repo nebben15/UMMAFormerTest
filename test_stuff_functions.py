@@ -127,3 +127,10 @@ def show_vid_with_segments(video_id, segments, scores, cfg, threshold=0.9):
     </script>
     """
     display(HTML(html))
+
+def get_sample_by_video_id(dataset, video_id):
+    for i in range(len(dataset)):
+        sample = dataset[i]
+        if sample['video_id'] == video_id:
+            return [sample]
+    return None

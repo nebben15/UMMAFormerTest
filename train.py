@@ -203,6 +203,19 @@ def main(args):
     print("All done!")
     return
 
+def run(config, eval, print_freq=10, ckpt_freq=15, output='', resume=''):
+    """Programmatically call the main functionality."""
+    class Args:
+        def __init__(self, config, eval, print_freq, ckpt_freq, output, resume):
+            self.config = config
+            self.print_freq = print_freq
+            self.ckpt_freq = ckpt_freq
+            self.output = output
+            self.resume = resume
+            self.eval = eval
+    args = Args(config, eval, print_freq, ckpt_freq, output, resume)
+    main(args)
+
 ################################################################################
 if __name__ == '__main__':
     """Entry Point"""
