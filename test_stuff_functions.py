@@ -4,6 +4,9 @@ import cv2
 import numpy as np
 from IPython.display import display, HTML
 import pandas as pd
+import tempfile
+import shutil
+import subprocess
 
 def format_results_as_matrix(file_path):
     detection_data = []
@@ -128,9 +131,78 @@ def show_vid_with_segments(video_id, segments, scores, cfg, threshold=0.9):
     """
     display(HTML(html))
 
+def show_vid(video_id, cfg):
+    # Find the video file path (search in train, test, valid subfolders)
+    video_root = cfg['dataset']['feat_folder'].replace('feats/tsn', 'videos')
+    video_path = None
+    for split in ['train', 'test', 'valid']:
+        candidate = os.path.join(video_root, split, f"{video_id}.mp4")
+        if os.path.isfile(candidate):
+            video_path = candidate
+            break
+    if video_path is None:
+        print(video_path)
+        raise FileNotFoundError(f"Video file not found in train/test/valid: {video_id}.mp4")
+
+    # Prepare video path relative to notebook root for HTML
+    video_rel_path = video_path.lstrip('./') if video_path.startswith('./') else video_path
+
+    # HTML for video with audio (audio is included by default in <video> tag if present in the file)
+    html = f"""
+    <div style="position: relative; width: 640px;">
+        <video width="640" controls style="display: block;">
+            <source src="{video_rel_path}" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+    """
+    display(HTML(html))
+
 def get_sample_by_video_id(dataset, video_id):
     for i in range(len(dataset)):
         sample = dataset[i]
         if sample['video_id'] == video_id:
             return [sample]
     return None
+
+def human_readable_size(num_bytes):
+    if num_bytes < 1024:
+        return f"{num_bytes} bytes"
+    elif num_bytes < 1024**2:
+        return f"{num_bytes / 1024:.2f} KB"
+    elif num_bytes < 1024**3:
+        return f"{num_bytes / (1024**2):.2f} MB"
+    else:
+        return f"{num_bytes / (1024**3):.2f} GB"
+    
+def get_nparray_size(data):
+    data_nbytes = data.nbytes
+    size_str = human_readable_size(data_nbytes)
+    return size_str
+
+def get_mp4_size(path):
+    """
+    Returns the size of the mp4 video file (with audio) and the size without audio (video only),
+    both as human-readable strings (e.g., KB, MB).
+    Args:
+        path (str): Path to the mp4 file.
+    Returns:
+        tuple: (size_with_audio_str, size_without_audio_str)
+    """
+    # Size with audio
+    size_with_audio = os.path.getsize(path)
+
+    # Remove audio using ffmpeg and save to a temp file
+    temp_dir = tempfile.mkdtemp()
+    temp_video_path = os.path.join(temp_dir, "video_no_audio.mp4")
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", path,
+            "-c", "copy", "-an", temp_video_path
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        size_without_audio = os.path.getsize(temp_video_path)
+    finally:
+        shutil.rmtree(temp_dir)
+
+    return human_readable_size(size_with_audio), human_readable_size(size_without_audio)

@@ -153,6 +153,7 @@ class PtTransformerRegHead(nn.Module):
                 cur_out, _ = self.head[idx](cur_out, cur_mask)
                 cur_out = self.act(self.norm[idx](cur_out))
             cur_offsets, _ = self.offset_head(cur_out, cur_mask)
+            # scaling allows for different magnitude of offset for each fpn level
             out_offsets += (F.relu(self.scale[l](cur_offsets)), )
 
         # fpn_masks remains the same
@@ -380,6 +381,9 @@ class AVPtTransformerRecovery(nn.Module):
                     gt_video_labels.append(torch.zeros(1).to(self.device))
             # compute the gt labels for cls & reg
             # list of prediction targets
+            # assign label and offsets to each anchor point
+            # - if not in segment -> background
+            # - if in multiple segments -> choose shortest
             gt_cls_labels, gt_offsets = self.label_points(
                 points, gt_segments, gt_labels)
 
@@ -653,6 +657,10 @@ class AVPtTransformerRecovery(nn.Module):
             offsets_per_vid = [x[idx] for x in out_offsets]
             fpn_masks_per_vid = [x[idx] for x in fpn_masks]
             # inference on a single video (should always be the case)
+            # get class probs
+            # filter --> only predictions above test_pre_nms_thresh
+            # keep only top k -> faster nms
+            # get segments (in terms of highest level feature grid)
             results_per_vid = self.inference_single_video(
                 points, fpn_masks_per_vid,
                 cls_logits_per_vid, offsets_per_vid
@@ -666,6 +674,7 @@ class AVPtTransformerRecovery(nn.Module):
             results.append(results_per_vid)
 
         # step 3: postprocssing
+        # applies NMS and gets segments in actual timestamps
         results = self.postprocessing(results)
 
         return results
