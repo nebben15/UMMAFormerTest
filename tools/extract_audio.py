@@ -38,8 +38,7 @@ def initializer(global_args):
     global args
     args = global_args
 
-if __name__ == '__main__':
-    args = parse_args()
+def run(args):
     os.makedirs(args.dst_root, exist_ok=True)
     print('Reading videos from folder: ', args.root)
     print('Extension of videos: ', args.ext)
@@ -51,3 +50,7 @@ if __name__ == '__main__':
 
     with Pool(args.num_workers, initializer, (args,)) as pool:
         list(tqdm(pool.imap_unordered(extract_audio_wav, fullpath_list), total=len(fullpath_list)))
+
+if __name__ == '__main__':
+    args = parse_args()
+    run(args)

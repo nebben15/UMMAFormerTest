@@ -47,6 +47,8 @@ for value in tqdm(json_db):
 # f.writelines(test_list[2000*end:])
 # f.close()
 
+os.makedirs("data/lavdf/filelist", exist_ok=True)
+
 f=open("data/lavdf/filelist/train.txt","w")
  
 f.writelines(train_list)
