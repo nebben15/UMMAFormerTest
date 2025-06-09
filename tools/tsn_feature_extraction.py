@@ -34,6 +34,8 @@ def parse_args():
         help='which part of dataset to forward(alldata[part::total])')
     parser.add_argument(
         '--total', type=int, default=1, help='how many parts exist')
+    parser.add_argument('--pca-dim', type=int, default=None, help='If set, reduce feature dim to this size using PCA')
+    parser.add_argument('--pca-fit-samples', type=int, default=10000, help='Number of samples to fit PCA')
     args = parser.parse_args()
     return args
 
@@ -115,11 +117,48 @@ def main():
     data = data[args.part::args.total]
     # data = data[50760:]
 
+    # Prepare for PCA
+    pca = None
+    feature_samples = []
+    fit_pca = args.pca_dim is not None
+
     # enumerate Untrimmed videos, extract feature from each of them
     prog_bar = mmcv.ProgressBar(len(data))
     if not osp.exists(args.output_prefix):
         os.system(f'mkdir -p {args.output_prefix}')
 
+    # First pass: collect features for PCA fitting if needed
+    if fit_pca:
+        print(f"Collecting features from first {args.pca_fit_samples} videos for PCA fitting...")
+        for idx, item in enumerate(data[:args.pca_fit_samples]):
+            frame_dir = item
+            output_file = osp.basename(frame_dir) + '.npy'
+            frame_dir = osp.join(args.data_prefix, frame_dir)
+            length = len(glob.glob(os.path.join(frame_dir,'img_*.jpg' if args.is_rgb else 'flow_x_*.jpg')))
+            length = int(length)
+            tmpl = dict(
+                frame_dir=frame_dir,
+                total_frames=length,
+                filename_tmpl=args.f_tmpl,
+                start_index=0,
+                modality=args.modality)
+            sample = data_pipeline(tmpl)
+            imgs = sample['imgs']
+            shape = imgs.shape
+            imgs = imgs.reshape((shape[0], 1) + shape[1:])
+            imgs = imgs.cuda()
+            feat = forward_data(model, imgs)
+            # If feat is 2D (N, D), stack all
+            if feat.ndim == 2:
+                feature_samples.append(feat)
+            else:
+                feature_samples.append(feat.reshape(-1, feat.shape[-1]))
+        feature_samples = np.concatenate(feature_samples, axis=0)
+        pca = PCA(n_components=args.pca_dim)
+        pca.fit(feature_samples)
+        print("PCA fitted.")
+
+    # Second pass: extract and save features (with PCA if needed)
     for item in data:
         frame_dir = item
         
@@ -165,6 +204,14 @@ def main():
             return np.concatenate(results)
 
         feat = forward_data(model, imgs)
+
+        # Apply PCA if requested
+        if pca is not None:
+            if feat.ndim == 2:
+                feat = pca.transform(feat)
+            else:
+                feat = pca.transform(feat.reshape(-1, feat.shape[-1]))
+
         np.save(output_file,feat)
         # with open(output_file, 'wb') as fout:
         #     pickle.dump(feat, fout)

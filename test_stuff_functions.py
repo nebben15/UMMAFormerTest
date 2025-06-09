@@ -327,7 +327,7 @@ def count_files_of_type(folder_path, extension):
                 count += 1
     return count
 
-def process_single_file(
+def average_feature_sequence_length_audio_helper(
     file_path,
     sample_rate,
     n_fft,
@@ -360,7 +360,7 @@ def process_single_file(
         print(f"Error processing {file_path}: {e}")
         return None
 
-def average_feature_sequence_length(
+def average_feature_sequence_length_audio(
     root_folder,
     sample_rate=16000,
     n_fft=1024,
@@ -395,7 +395,7 @@ def average_feature_sequence_length(
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
-                process_single_file,
+                average_feature_sequence_length_audio_helper,
                 file_path,
                 sample_rate,
                 n_fft,
@@ -415,24 +415,24 @@ def average_feature_sequence_length(
     avg_length = sum(sequence_lengths) / len(sequence_lengths)
     return avg_length
 
+def parse_size(size_str):
+    size_str = size_str.strip().upper()
+    if size_str.endswith('BYTES'):
+        return float(size_str.replace('BYTES', '').strip())
+    elif size_str.endswith('KB'):
+        return float(size_str.replace('KB', '').strip()) * 1024
+    elif size_str.endswith('MB'):
+        return float(size_str.replace('MB', '').strip()) * 1024**2
+    elif size_str.endswith('GB'):
+        return float(size_str.replace('GB', '').strip()) * 1024**3
+    else:
+        raise ValueError(f"Unknown size format: {size_str}")
+
 def contraction_ratio(original_size_str, feature_size_str):
     """
     Calculates the contraction ratio (feature_size / original_size) given two human-readable size strings.
     Returns the ratio as a float and a formatted string (e.g., "0.25 (4x smaller)").
     """
-    def parse_size(size_str):
-        size_str = size_str.strip().upper()
-        if size_str.endswith('BYTES'):
-            return float(size_str.replace('BYTES', '').strip())
-        elif size_str.endswith('KB'):
-            return float(size_str.replace('KB', '').strip()) * 1024
-        elif size_str.endswith('MB'):
-            return float(size_str.replace('MB', '').strip()) * 1024**2
-        elif size_str.endswith('GB'):
-            return float(size_str.replace('GB', '').strip()) * 1024**3
-        else:
-            raise ValueError(f"Unknown size format: {size_str}")
-
     orig_bytes = parse_size(original_size_str)
     feat_bytes = parse_size(feature_size_str)
     if orig_bytes == 0:
@@ -440,3 +440,148 @@ def contraction_ratio(original_size_str, feature_size_str):
     ratio = feat_bytes / orig_bytes
     contraction = f"{ratio:.3f} ({1/ratio:.1f}x smaller)" if ratio < 1 else f"{ratio:.3f} ({ratio:.1f}x larger)"
     return ratio, contraction
+
+def estimate_total_uncompressed_video_size_helper(video_path):
+    """
+    Helper function to estimate uncompressed size of a single video file.
+    Returns the uncompressed size in bytes, or None if failed.
+    """
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return None
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        if width == 0 or height == 0 or fps == 0 or frame_count == 0:
+            cap.release()
+            return None
+        duration = frame_count / fps
+        uncompressed_bytes = width * height * 3 * fps * duration
+        cap.release()
+        return uncompressed_bytes
+    except Exception as e:
+        return None
+
+def estimate_total_uncompressed_video_size(folder, max_workers=8):
+    """
+    Recursively estimates the total uncompressed size of all MP4 videos in a folder using parallel processing.
+    Returns the total size as a human-readable string.
+    """
+    # Collect all mp4 files recursively
+    mp4_files = []
+    for dirpath, _, filenames in os.walk(folder):
+        for fname in filenames:
+            if fname.lower().endswith('.mp4'):
+                mp4_files.append(os.path.join(dirpath, fname))
+
+    total_size = 0
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(estimate_total_uncompressed_video_size_helper, f): f for f in mp4_files}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing videos"):
+            size = future.result()
+            if size is not None:
+                total_size += size
+
+    return human_readable_size(total_size)
+
+def get_num_frames(video_path):
+    try:
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return None
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        return frame_count if frame_count > 0 else None
+    except Exception as e:
+        print(f"Error processing {video_path}: {e}")
+        return None
+
+def average_feature_sequence_length_video(
+    root_folder,
+    max_workers=8,
+):
+    """
+    Recursively calculates the average sequence length (number of frames)
+    of all .mp4 video files under root_folder using parallel processing.
+
+    Args:
+        root_folder (str): Root folder path containing .mp4 files (and subfolders).
+        max_workers (int): Number of parallel workers.
+
+    Returns:
+        float: Average number of frames per video.
+    """
+    # Collect all mp4 files recursively
+    mp4_files = []
+    for dirpath, _, filenames in os.walk(root_folder):
+        for fname in filenames:
+            if fname.lower().endswith('.mp4'):
+                mp4_files.append(os.path.join(dirpath, fname))
+
+    sequence_lengths = []
+
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from tqdm import tqdm
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(get_num_frames, file_path): file_path for file_path in mp4_files
+        }
+
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing video frames"):
+            seq_len = future.result()
+            if seq_len is not None:
+                sequence_lengths.append(seq_len)
+
+    if not sequence_lengths:
+        return 0.0
+
+    avg_length = sum(sequence_lengths) / len(sequence_lengths)
+    return avg_length
+
+def get_feature_size_stats(selected_feature_dim, number_samples, average_sequence_length, total_size_raw_data, datatype_bits=32):
+    estimated_total_size_features_bits = number_samples * average_sequence_length * selected_feature_dim * datatype_bits
+    readable_size = human_readable_size(estimated_total_size_features_bits / 8)
+    print('Total size of feature representation: ', readable_size, f'for {selected_feature_dim} dimensional features.')
+    print('Estimated size of uncompressed data:', total_size_raw_data)
+    ratio, contraction = contraction_ratio(total_size_raw_data, readable_size)
+    print('Contraction ratio:', f'{contraction}')
+    return readable_size
+
+def add_human_readable(*args):
+    total = 0
+    for a in args:
+        total += parse_size(a)
+    return human_readable_size(total)
+
+def generate_filelists_by_type(root_path, file_ext=".wav", parent_folder="."):
+    """
+    Recursively (one level) searches for files of a given type in each subfolder of root_path,
+    and writes a .txt file with relative paths (to parent_folder) for each subfolder.
+    Output .txt files are stored in a folder named 'filelist' under root_path.
+
+    Args:
+        root_path (str): The root directory to search.
+        file_ext (str): File extension to look for (e.g., ".wav").
+        parent_folder (str): The parent folder to which paths should be relative.
+    """
+    filelist_dir = os.path.join(root_path, "filelist")
+    os.makedirs(filelist_dir, exist_ok=True)
+
+    for subdir in os.listdir(root_path):
+        subdir_path = os.path.join(root_path, subdir)
+        if os.path.isdir(subdir_path):
+            file_list = []
+            for fname in os.listdir(subdir_path):
+                if fname.lower().endswith(file_ext):
+                    abs_path = os.path.join(subdir_path, fname)
+                    rel_path = os.path.relpath(abs_path, parent_folder)
+                    file_list.append(rel_path + "\n")
+            if file_list:
+                out_txt = os.path.join(filelist_dir, f"{subdir}.txt")
+                with open(out_txt, "w") as f:
+                    f.writelines(file_list)
+                print(f"Wrote {len(file_list)} entries to {out_txt}")
