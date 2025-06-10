@@ -1,4 +1,3 @@
-# Copyright (c) OpenMMLab. All rights reserved.
 import argparse
 import os
 import os.path as osp
@@ -11,36 +10,12 @@ import glob
 from mmaction.datasets.pipelines import Compose
 from mmaction.models import build_model
 
-def parse_args():
-    # Argument parser for command-line options
-    parser = argparse.ArgumentParser(description='Extract TSN Feature')
-    parser.add_argument('--data-prefix', default='', help='dataset prefix')
-    parser.add_argument('--output-prefix', default='', help='output prefix')
-    parser.add_argument(
-        '--data-list',
-        help='video list of the dataset, the format should be '
-        '`frame_dir num_frames output_file`')
-    parser.add_argument(
-        '--frame-interval',
-        type=int,
-        default=1,
-        help='the sampling frequency of frame in the untrimed video')
-    parser.add_argument('--modality', default='RGB', choices=['RGB', 'Flow'])
-    parser.add_argument('--ckpt', help='checkpoint for feature extraction')
-    parser.add_argument(
-        '--part',
-        type=int,
-        default=0,
-        help='which part of dataset to forward(alldata[part::total])')
-    parser.add_argument(
-        '--total', type=int, default=1, help='how many parts exist')
-    parser.add_argument('--pca-file', type=str, default=None, help='Path to a pre-fitted PCA .pkl file')
-    args = parser.parse_args()
-    return args
+from sklearn.decomposition import PCA
+import pickle
 
-def main():
+
+def fit_pca_tsn():
     args = parse_args()
-
     # Set up modality-specific parameters
     args.is_rgb = args.modality == 'RGB'
     args.clip_len = 1 if args.is_rgb else 5
@@ -55,7 +30,7 @@ def main():
     args.in_channels = args.clip_len * (3 if args.is_rgb else 2)
     args.batch_size = 200  # max batch_size for one forward
 
-    # Define the data pipeline for untrimmed videos
+        # Define the data pipeline for untrimmed videos
     data_pipeline = [
         dict(
             type='UntrimmedSampleFrames',
@@ -97,50 +72,13 @@ def main():
     data = [os.path.splitext(os.path.basename(x.strip()))[0] for x in data]
     data = data[args.part::args.total]
 
-    # Prepare for PCA
-    pca = None
-    feature_samples = []
-    fit_pca = args.pca_dim is not None
-
     # Progress bar for feature extraction
     prog_bar = mmcv.ProgressBar(len(data))
     if not osp.exists(args.output_prefix):
         os.system(f'mkdir -p {args.output_prefix}')
 
-    # First pass: collect features for PCA fitting if needed
-    if fit_pca:
-        print(f"Collecting features from first {args.pca_fit_samples} videos for PCA fitting...")
-        for idx, item in enumerate(data[:args.pca_fit_samples]):
-            frame_dir = item
-            output_file = osp.basename(frame_dir) + '.npy'
-            frame_dir = osp.join(args.data_prefix, frame_dir)
-            length = len(glob.glob(os.path.join(frame_dir,'img_*.jpg' if args.is_rgb else 'flow_x_*.jpg')))
-            length = int(length)
-            # Prepare a sample for the pipeline
-            tmpl = dict(
-                frame_dir=frame_dir,
-                total_frames=length,
-                filename_tmpl=args.f_tmpl,
-                start_index=0,
-                modality=args.modality)
-            sample = data_pipeline(tmpl)
-            imgs = sample['imgs']
-            shape = imgs.shape
-            # Reshape for model input
-            imgs = imgs.reshape((shape[0], 1) + shape[1:])
-            imgs = imgs.cuda()
-            feat = forward_data(model, imgs)
-            # Stack features for PCA
-            if feat.ndim == 2:
-                feature_samples.append(feat)
-            else:
-                feature_samples.append(feat.reshape(-1, feat.shape[-1]))
-        feature_samples = np.concatenate(feature_samples, axis=0)
-        pca = PCA(n_components=args.pca_dim)
-        pca.fit(feature_samples)
-        print("PCA fitted.")
-
-    # Second pass: extract and save features (with PCA if needed)
+    # feature extraction
+    feats = []
     for item in data:
         frame_dir = item
         output_file = osp.basename(frame_dir) + '.npy'
@@ -180,16 +118,43 @@ def main():
             return np.concatenate(results)
 
         feat = forward_data(model, imgs)
+        feats.append(feats)
 
-        # Apply PCA if requested
-        if pca is not None:
-            if feat.ndim == 2:
-                feat = pca.transform(feat)
-            else:
-                feat = pca.transform(feat.reshape(-1, feat.shape[-1]))
+    # fit pca
+    all_feats = np.concatenate(feats, axis=0)  # shape: [total_samples, D]
+    pca = PCA(n_components=args.pca_dim)
+    pca.fit(all_feats)
+    with open(args.pca_save_path, "wb") as f:
+        pickle.dump(pca, f)
+    print(f"PCA fitted and saved to {args.pca_save_path}")
 
-        np.save(output_file, feat)
-        prog_bar.update()
+def parse_args():
+    # Argument parser for command-line options
+    parser = argparse.ArgumentParser(description='Create PCA for TSN extraction.')
+    parser.add_argument('--data-prefix', default='', help='dataset prefix')
+    parser.add_argument(
+        '--data-list',
+        help='video list of the dataset, the format should be '
+        '`frame_dir num_frames output_file`')
+    parser.add_argument(
+        '--frame-interval',
+        type=int,
+        default=1,
+        help='the sampling frequency of frame in the untrimed video')
+    parser.add_argument('--modality', default='RGB', choices=['RGB', 'Flow'])
+    parser.add_argument('--ckpt', help='checkpoint for feature extraction')
+    parser.add_argument(
+        '--part',
+        type=int,
+        default=0,
+        help='which part of dataset to forward(alldata[part::total])')
+    parser.add_argument(
+        '--total', type=int, default=1, help='how many parts exist')
+    parser.add_argument('--pca-dim', type=int, required=True, help='Number of PCA components')
+    parser.add_argument('--pca-save-path', type=str, required=True, help='Where to save the fitted PCA .pkl')
+    parser.add_argument('--pca-fit-samples', type=int, default=10000, help='Number of feature vectors to use for PCA fitting')
+    args = parser.parse_args()
+    return args
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    fit_pca_tsn()
